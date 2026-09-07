@@ -8,6 +8,7 @@ app.use(bodyParser.json());
 // -------------------- CONFIGURATION --------------------
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
+const PAGE_ID = process.env.PAGE_ID; // Render Environment Variables-এ PAGE_ID যোগ করা ভালো
 
 // Google Sheet ID
 const GOOGLE_SHEET_ID = '175DEroJl9xlgzh6mfa_aIH2HcqH04uxHgYVPO4DGNFg'; 
@@ -42,87 +43,105 @@ app.get('/webhook', (req, res) => {
 });
 
 // Webhook Event Handler (POST)
-app.post('/webhook', async (req, res) => {
+app.post('/webhook', (req, res) => {
   const body = req.body;
 
   if (body.object === 'page') {
-    for (const entry of body.entry) {
-      
-      // ------------ ১. মেসেঞ্জার চ্যাট হ্যান্ডলার ------------
-      if (entry.messaging && Array.isArray(entry.messaging)) {
-        for (const webhook_event of entry.messaging) {
-          if (webhook_event.message && !webhook_event.message.is_echo) {
-            const senderPsid = webhook_event.sender.id;
-            const userMessage = webhook_event.message.text ? webhook_event.message.text.toLowerCase() : '';
-
-            console.log(`Received message from ${senderPsid}: ${userMessage}`);
-
-            const products = await getProductsFromSheet();
-            let replyMessage = '';
-
-            for (const product of products) {
-              if (product.keyword) {
-                const keywordsList = product.keyword.split(',').map(k => k.trim().toLowerCase());
-                const isMatched = keywordsList.some(kw => userMessage.includes(kw));
-
-                if (isMatched) {
-                  replyMessage = `🌸 ${product.name}\n\n💰 Price: ${product.price}\n\nঅর্ডার করতে চাইলে আপনার নাম, ঠিকানা ও মোবাইল নম্বরটি জানিয়ে দিন!`;
-                  break;
-                }
-              }
-            }
-
-            if (!replyMessage) {
-              if (userMessage.includes('hi') || userMessage.includes('hello') || userMessage.includes('সালাম')) {
-                replyMessage = 'হ্যালো! The Korean Mart bd-তে আপনাকে স্বাগতম। আপনি কোন প্রোডাক্টটি সম্পর্কে জানতে চান?';
-              } else {
-                replyMessage = 'ধন্যবাদ আপনার মেসেজের জন্য! আমাদের প্রতিনিধি খুব শীঘ্রই আপনার সাথে যোগাযোগ করবেন। প্রোডাক্টের তথ্য জানতে সরাসরি প্রোডাক্টের নাম লিখে পাঠাতে পারেন।';
-              }
-            }
-
-            await callSendAPI(senderPsid, { text: replyMessage });
-          }
-        }
-      }
-
-      // ------------ ২. ফেসবুক পোস্ট কমেন্ট হ্যান্ডলার ------------
-      if (entry.changes && Array.isArray(entry.changes)) {
-        for (const change of entry.changes) {
-          console.log("Change detected:", JSON.stringify(change));
-
-          if (change.field === 'feed' && change.value.item === 'comment' && change.value.verb === 'add') {
-            const commentId = change.value.comment_id;
-            const commentText = change.value.message ? change.value.message.toLowerCase() : '';
-            const senderName = change.value.from ? change.value.from.name : 'Customer';
-
-            console.log(`New comment by ${senderName}: ${commentText}`);
-
-            const products = await getProductsFromSheet();
-            let matchedProduct = null;
-
-            for (const product of products) {
-              if (product.keyword) {
-                const keywordsList = product.keyword.split(',').map(k => k.trim().toLowerCase());
-                if (keywordsList.some(kw => commentText.includes(kw))) {
-                  matchedProduct = product;
-                  break;
-                }
-              }
-            }
-
-            let commentReply = '';
-            if (matchedProduct) {
-              commentReply = `ধন্যবাদ ${senderName}! ${matchedProduct.name}-এর দাম ${matchedProduct.price}। বিস্তারিত তথ্যের জন্য আমরা আপনাকে মেসেজ পাঠিয়েছি, ইনবক্স চেক করুন!`;
-            } else {
-              commentReply = `ধন্যবাদ ${senderName}! বিস্তারিত তথ্যের জন্য অনুগ্রহ করে আপনার ইনবক্স (Inbox) চেক করুন।`;
-            }
-
-            await replyToComment(commentId, commentReply);
-          }
-        }
-      }
-    }
+    // ১. মেটাকে সাথে সাথে জানান ডাটা রিসিভ হয়েছে (লুপ ও Re-try বন্ধ করতে)
     res.status(200).send('EVENT_RECEIVED');
+
+    // ২. ব্যাকগ্রাউন্ডে প্রসেসিং শুরু করুন
+    (async () => {
+      for (const entry of body.entry) {
+        
+        // ------------ ১. মেসেঞ্জার চ্যাট হ্যান্ডলার ------------
+        if (entry.messaging && Array.isArray(entry.messaging)) {
+          for (const webhook_event of entry.messaging) {
+            if (webhook_event.message && !webhook_event.message.is_echo) {
+              const senderPsid = webhook_event.sender.id;
+              const userMessage = webhook_event.message.text ? webhook_event.message.text.toLowerCase() : '';
+
+              console.log(`Received message from ${senderPsid}: ${userMessage}`);
+
+              const products = await getProductsFromSheet();
+              let replyMessage = '';
+
+              for (const product of products) {
+                if (product.keyword) {
+                  const keywordsList = product.keyword.split(',').map(k => k.trim().toLowerCase());
+                  const isMatched = keywordsList.some(kw => userMessage.includes(kw));
+
+                  if (isMatched) {
+                    replyMessage = `🌸 ${product.name}\n\n💰 Price: ${product.price}\n\nঅর্ডার করতে চাইলে আপনার নাম, ঠিকানা ও মোবাইল নম্বরটি জানিয়ে দিন!`;
+                    break;
+                  }
+                }
+              }
+
+              if (!replyMessage) {
+                if (userMessage.includes('hi') || userMessage.includes('hello') || userMessage.includes('সালাম')) {
+                  replyMessage = 'হ্যালো! আমাদের পেজে আপনাকে স্বাগতম। আপনি কোন প্রোডাক্টটি সম্পর্কে জানতে চান?';
+                } else {
+                  replyMessage = 'ধন্যবাদ আপনার মেসেজের জন্য! আমাদের প্রতিনিধি খুব শীঘ্রই আপনার সাথে যোগাযোগ করবেন। প্রোডাক্টের তথ্য জানতে সরাসরি প্রোডাক্টের নাম লিখে পাঠাতে পারেন।';
+                }
+              }
+
+              await callSendAPI(senderPsid, { text: replyMessage });
+            }
+          }
+        }
+
+        // ------------ ২. ফেসবুক পোস্ট কমেন্ট হ্যান্ডলার ------------
+        if (entry.changes && Array.isArray(entry.changes)) {
+          for (const change of entry.changes) {
+            if (change.field === 'feed' && change.value.item === 'comment' && change.value.verb === 'add') {
+              
+              const senderId = change.value.from ? change.value.from.id : null;
+              const senderName = change.value.from ? change.value.from.name : 'Customer';
+
+              // [ফিল্টার ১] নিজের পেজের কমেন্ট হলে তা ইগনোর করুন (ইনফিনিট লুপ বন্ধ করতে)
+              if (PAGE_ID && senderId === PAGE_ID) {
+                console.log("Ignored own page comment/reply.");
+                continue;
+              }
+
+              // [ফিল্টার ২] কমেন্টটির উত্তর যদি নিজের পেজ থেকেই দেওয়া হয়ে থাকে
+              if (senderName === 'Trendy World') {
+                console.log("Ignored comment from Page name.");
+                continue;
+              }
+
+              const commentId = change.value.comment_id;
+              const commentText = change.value.message ? change.value.message.toLowerCase() : '';
+
+              console.log(`New comment by ${senderName}: ${commentText}`);
+
+              const products = await getProductsFromSheet();
+              let matchedProduct = null;
+
+              for (const product of products) {
+                if (product.keyword) {
+                  const keywordsList = product.keyword.split(',').map(k => k.trim().toLowerCase());
+                  if (keywordsList.some(kw => commentText.includes(kw))) {
+                    matchedProduct = product;
+                    break;
+                  }
+                }
+              }
+
+              let commentReply = '';
+              if (matchedProduct) {
+                commentReply = `ধন্যবাদ ${senderName}! ${matchedProduct.name}-এর দাম ${matchedProduct.price}। বিস্তারিত তথ্যের জন্য আমরা আপনাকে মেসেজ পাঠিয়েছি, ইনবক্স চেক করুন!`;
+              } else {
+                commentReply = `ধন্যবাদ ${senderName}! বিস্তারিত তথ্যের জন্য অনুগ্রহ করে আপনার ইনবক্স (Inbox) চেক করুন।`;
+              }
+
+              await replyToComment(commentId, commentReply);
+            }
+          }
+        }
+      }
+    })();
   } else {
     res.sendStatus(404);
   }
