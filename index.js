@@ -70,7 +70,7 @@ app.post('/webhook', async (req, res) => {
         // যদি কি-ওয়ার্ড না মেলে তবে ডিফল্ট রিপ্লাই
         if (!replyMessage) {
           if (userMessage.includes('hi') || userMessage.includes('hello') || userMessage.includes('সালাম')) {
-            replyMessage = 'হ্যালো! The Korean Mart bd-তে আপনাকে স্বাগতম। আপনি কোন প্রোডাক্টটি সম্পর্কে জানতে চান?';
+            replyMessage = 'হ্যালো! আমাদের ট্রেন্ডি ওয়ার্ল্ড পেজে আপনাকে স্বাগতম। আপনি কোন প্রোডাক্টটি সম্পর্কে জানতে চান?';
           } else {
             replyMessage = 'ধন্যবাদ আপনার মেসেজের জন্য! আমাদের প্রতিনিধি খুব শীঘ্রই আপনার সাথে যোগ দেবেন। প্রোডাক্টের দাম জানতে সরাসরি প্রোডাক্টের নাম লিখে পাঠাতে পারেন।';
           }
