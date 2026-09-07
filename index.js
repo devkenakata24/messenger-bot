@@ -9,7 +9,7 @@ app.use(bodyParser.json());
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 
-// তোমার Google Sheet-এর ID
+// Google Sheet ID
 const GOOGLE_SHEET_ID = '175DEroJl9xlgzh6mfa_aIH2HcqH04uxHgYVPO4DGNFg'; 
 // --------------------------------------------------------
 
@@ -47,37 +47,81 @@ app.post('/webhook', async (req, res) => {
 
   if (body.object === 'page') {
     for (const entry of body.entry) {
-      const webhook_event = entry.messaging ? entry.messaging[0] : null;
+      
+      // ------------ ১. মেসেঞ্জার চ্যাট হ্যান্ডলার ------------
+      if (entry.messaging && entry.messaging[0]) {
+        const webhook_event = entry.messaging[0];
 
-      if (webhook_event && webhook_event.message && !webhook_event.message.is_echo) {
-        const senderPsid = webhook_event.sender.id;
-        const userMessage = webhook_event.message.text ? webhook_event.message.text.toLowerCase() : '';
+        if (webhook_event.message && !webhook_event.message.is_echo) {
+          const senderPsid = webhook_event.sender.id;
+          const userMessage = webhook_event.message.text ? webhook_event.message.text.toLowerCase() : '';
 
-        console.log(`Received message from ${senderPsid}: ${userMessage}`);
+          console.log(`Received message from ${senderPsid}: ${userMessage}`);
 
-        // গুগল শিট থেকে সাম্প্রতিক প্রোডাক্ট তালিকা আনা
-        const products = await getProductsFromSheet();
-        let replyMessage = '';
+          const products = await getProductsFromSheet();
+          let replyMessage = '';
 
-        // কি-ওয়ার্ড দিয়ে শিটে অনুসন্ধান করা
-        for (const product of products) {
-          if (product.keyword && userMessage.includes(product.keyword.toLowerCase())) {
-            replyMessage = `🌸 ${product.name}\n\n💰 Price: ${product.price}\n\nঅর্ডার করতে চাইলে আপনার নাম, ঠিকানা ও মোবাইল নম্বরটি জানিয়ে দিন!`;
-            break;
+          // একাধিক কি-ওয়ার্ড চেক করার লজিক (Comma separated keywords)
+          for (const product of products) {
+            if (product.keyword) {
+              const keywordsList = product.keyword.split(',').map(k => k.trim().toLowerCase());
+              const isMatched = keywordsList.some(kw => userMessage.includes(kw));
+
+              if (isMatched) {
+                replyMessage = `🌸 ${product.name}\n\n💰 Price: ${product.price}\n\nঅর্ডার করতে চাইলে আপনার নাম, ঠিকানা ও মোবাইল নম্বরটি জানিয়ে দিন!`;
+                break;
+              }
+            }
           }
-        }
 
-        // যদি কি-ওয়ার্ড না মেলে তবে ডিফল্ট রিপ্লাই
-        if (!replyMessage) {
-          if (userMessage.includes('hi') || userMessage.includes('hello') || userMessage.includes('সালাম')) {
-            replyMessage = 'হ্যালো! আমাদের ট্রেন্ডি ওয়ার্ল্ড পেজে আপনাকে স্বাগতম। আপনি কোন প্রোডাক্টটি সম্পর্কে জানতে চান?';
+          // ডিফল্ট মেসেজ লজিক
+          if (!replyMessage) {
+            if (userMessage.includes('hi') || userMessage.includes('hello') || userMessage.includes('সালাম')) {
+              replyMessage = 'হ্যালো! The Korean Mart bd-তে আপনাকে স্বাগতম। আপনি কোন প্রোডাক্টটি সম্পর্কে জানতে চান?';
+            } else {
+              replyMessage = 'ধন্যবাদ আপনার মেসেজের জন্য! আমাদের প্রতিনিধি খুব শীঘ্রই আপনার সাথে যোগাযোগ করবেন। প্রোডাক্টের তথ্য জানতে সরাসরি প্রোডাক্টের নাম লিখে পাঠাতে পারেন।';
+            }
+          }
+
+          await callSendAPI(senderPsid, { text: replyMessage });
+        }
+      }
+
+      // ------------ ২. ফেসবুক পোস্ট কমেন্ট হ্যান্ডলার ------------
+      if (entry.changes && entry.changes[0]) {
+        const change = entry.changes[0];
+
+        if (change.field === 'feed' && change.value.item === 'comment' && change.value.verb === 'add') {
+          const commentId = change.value.comment_id;
+          const commentText = change.value.message ? change.value.message.toLowerCase() : '';
+          const senderName = change.value.from ? change.value.from.name : 'Customer';
+
+          console.log(`New comment by ${senderName}: ${commentText}`);
+
+          const products = await getProductsFromSheet();
+          let matchedProduct = null;
+
+          // কমেন্টে কোন কি-ওয়ার্ড আছে কিনা চেক করা
+          for (const product of products) {
+            if (product.keyword) {
+              const keywordsList = product.keyword.split(',').map(k => k.trim().toLowerCase());
+              if (keywordsList.some(kw => commentText.includes(kw))) {
+                matchedProduct = product;
+                break;
+              }
+            }
+          }
+
+          let commentReply = '';
+          if (matchedProduct) {
+            commentReply = `ধন্যবাদ ${senderName}! ${matchedProduct.name}-এর দাম ${matchedProduct.price}। বিস্তারিত তথ্যের জন্য আমরা আপনাকে মেসেজ পাঠিয়েছি, ইনবক্স চেক করুন!`;
           } else {
-            replyMessage = 'ধন্যবাদ আপনার মেসেজের জন্য! আমাদের প্রতিনিধি খুব শীঘ্রই আপনার সাথে যোগ দেবেন। প্রোডাক্টের দাম জানতে সরাসরি প্রোডাক্টের নাম লিখে পাঠাতে পারেন।';
+            commentReply = `ধন্যবাদ ${senderName}! বিস্তারিত তথ্যের জন্য অনুগ্রহ করে আপনার ইনবক্স (Inbox) চেক করুন।`;
           }
-        }
 
-        // মেসেঞ্জারে উত্তর পাঠানো
-        await callSendAPI(senderPsid, { text: replyMessage });
+          // কমেন্টের উত্তর দেওয়া
+          await replyToComment(commentId, commentReply);
+        }
       }
     }
     res.status(200).send('EVENT_RECEIVED');
@@ -86,7 +130,7 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// Facebook Graph API call
+// Facebook Graph API - Send Message
 async function callSendAPI(senderPsid, response) {
   const requestBody = {
     recipient: { id: senderPsid },
@@ -98,6 +142,18 @@ async function callSendAPI(senderPsid, response) {
     console.log('Message sent successfully');
   } catch (err) {
     console.error('Unable to send message:', err.response ? err.response.data : err.message);
+  }
+}
+
+// Facebook Graph API - Reply to Comment
+async function replyToComment(commentId, message) {
+  try {
+    await axios.post(`https://graph.facebook.com/v18.0/${commentId}/comments?access_token=${PAGE_ACCESS_TOKEN}`, {
+      message: message
+    });
+    console.log('Comment replied successfully');
+  } catch (err) {
+    console.error('Unable to reply to comment:', err.response ? err.response.data : err.message);
   }
 }
 
